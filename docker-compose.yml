@@ -1,0 +1,15 @@
+services:
+  blogpusher:
+    image: ghcr.io/emenblade/blogpusher:latest
+    container_name: blogpusher
+    restart: unless-stopped
+    ports:
+      - "5000:5000"   # change left side for multiple instances (e.g. 5001:5000)
+    volumes:
+      - ./config.yaml:/app/config.yaml:ro
+
+# To run a second instance for a different blog:
+#   1. Copy this folder to a new directory
+#   2. Change container_name to something unique (e.g. blogpusher-travel)
+#   3. Change the left port (e.g. 5001:5000)
+#   4. Drop in a new config.yaml pointing at the other repo

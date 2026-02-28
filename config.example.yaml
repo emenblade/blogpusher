@@ -1,0 +1,4 @@
+github_token: ghp_your_token_here
+github_repo: youruser/your-blog-repo
+github_branch: main
+site_url: https://your-blog-url.com

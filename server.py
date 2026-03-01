@@ -126,25 +126,6 @@ def push_file(path, data, message, is_binary=False):
     return ok, r.json().get("message", "") if not ok else ""
 
 
-# ── Target-repo helpers (for setup endpoint) ───────────────────────────────────
-def _gh_headers_for(token):
-    return {"Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json"}
-
-def _get_sha_for(repo, path, token):
-    r = requests.get(f"{GITHUB_API}/repos/{repo}/contents/{path}", headers=_gh_headers_for(token))
-    return r.json().get("sha") if r.status_code == 200 else None
-
-def _push_file_to(repo, branch, token, path, data, message, is_binary=False):
-    encoded = base64.b64encode(data if is_binary else data.encode()).decode()
-    payload = {"message": message, "content": encoded, "branch": branch}
-    sha = _get_sha_for(repo, path, token)
-    if sha:
-        payload["sha"] = sha
-    r = requests.put(f"{GITHUB_API}/repos/{repo}/contents/{path}", headers=_gh_headers_for(token), json=payload)
-    ok = r.status_code in (200, 201)
-    return ok, r.json().get("message", "") if not ok else ""
-
-
 # ── Utilities ──────────────────────────────────────────────────────────────────
 def slugify(title):
     s = title.lower().strip()
@@ -234,6 +215,13 @@ def form():
       transition: color 0.15s;
     }
     .preview-item.slider-hidden .eye-btn { color: #ef4444; }
+    .preview-item .copy-md-btn {
+      position: absolute; bottom: 4px; right: 4px;
+      background: rgba(0,0,0,0.6); color: #a78bfa; border: none; border-radius: 4px;
+      width: 22px; height: 22px; padding: 3px; cursor: pointer;
+      display: flex; align-items: center; justify-content: center;
+      transition: color 0.15s;
+    }
     .check-row {
       display: flex; align-items: center; gap: 10px; cursor: pointer; margin-top: 14px;
     }
@@ -301,12 +289,22 @@ def form():
 <body>
   <div class="top-bar">
     <h1>BlogPusher</h1>
-    <nav style="display:flex;gap:16px">
+    <nav style="display:flex;align-items:center;gap:16px">
+      <span id="repo-badge" style="font-size:0.72rem;color:#444;font-family:monospace;margin-right:4px"></span>
       <a href="/manage" class="nav-link">Manage</a>
       <a href="/setup-blog" class="nav-link">Setup blog</a>
     </nav>
   </div>
   <p class="subtitle">Fill in the fields, upload your photos, publish.</p>
+
+  <div id="edit-banner" style="display:none; margin-bottom:12px; padding:10px 14px;
+    background:#1a1430; border:1px solid #4c1d95; border-radius:8px;
+    font-size:0.82rem; color:#a78bfa;">
+    Editing: <strong id="edit-banner-slug"></strong><br>
+    <span style="color:#555;font-size:0.75rem">
+      Existing images are preserved — upload new ones to add or replace them.
+    </span>
+  </div>
 
   <label>Post Title</label>
   <input type="text" id="title" placeholder="What happened?">
@@ -411,12 +409,23 @@ And so on.</code></pre>
 
     const EYE_ON = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>`;
     const EYE_OFF = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>`;
+    const COPY_ICON = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>`;
+    const CHECK_ICON = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>`;
+
+    function copyMd(text, btn) {
+      navigator.clipboard.writeText(text).then(() => {
+        btn.innerHTML = CHECK_ICON;
+        setTimeout(() => { btn.innerHTML = COPY_ICON; }, 1200);
+      });
+    }
 
     document.getElementById("photos").addEventListener("change", function(e) {
       selectedFiles = [...selectedFiles, ...Array.from(e.target.files)];
       renderPreviews();
       this.value = "";
     });
+
+    document.getElementById("cover-in-gallery").addEventListener("change", renderPreviews);
 
     const ua = document.getElementById("upload-area");
     ua.addEventListener("dragover", e => { e.preventDefault(); ua.classList.add("dragover"); });
@@ -429,17 +438,25 @@ And so on.</code></pre>
 
     function renderPreviews() {
       const grid = document.getElementById("preview-grid");
+      const coverInGallery = document.getElementById("cover-in-gallery").checked;
       grid.innerHTML = "";
       selectedFiles.forEach((file, i) => {
         const hidden = excludedFromSlider.has(i);
         const item = document.createElement("div");
         item.className = "preview-item" + (hidden ? " slider-hidden" : "");
         const url = URL.createObjectURL(file);
+        let bodyN;
+        if (i === 0 && !coverInGallery) bodyN = null;
+        else if (coverInGallery)        bodyN = i + 1;
+        else                            bodyN = i;
+        const ext = file.name.split('.').pop().toLowerCase();
+        const mdText = (hidden && bodyN !== null) ? `![](_${bodyN}-image.${ext})` : null;
         item.innerHTML = `
           <img src="${url}" alt="">
           <span class="badge">${i === 0 ? "Cover" : i + 1}</span>
           <button class="remove-btn" onclick="removePhoto(${i})" title="Remove">&#x2715;</button>
           <button class="eye-btn" onclick="toggleSlider(${i})" title="${hidden ? "Add to slider" : "Hide from slider"}">${hidden ? EYE_OFF : EYE_ON}</button>
+          ${mdText ? `<button class="copy-md-btn" title="Copy markdown" onclick="copyMd(${JSON.stringify(mdText)}, this)">${COPY_ICON}</button>` : ""}
         `;
         grid.appendChild(item);
       });
@@ -536,6 +553,30 @@ And so on.</code></pre>
       }
       btn.disabled = false;
     }
+
+    (async function() {
+      const editSlug = new URLSearchParams(window.location.search).get("edit");
+      if (!editSlug) return;
+      document.getElementById("publish-btn").textContent = "Update Post";
+      document.getElementById("edit-banner-slug").textContent = editSlug;
+      document.getElementById("edit-banner").style.display = "block";
+      try {
+        const r = await fetch(`/api/post/${encodeURIComponent(editSlug)}`);
+        if (!r.ok) return;
+        const p = await r.json();
+        document.getElementById("title").value       = p.title || "";
+        document.getElementById("date").value        = p.date  || "";
+        document.getElementById("description").value = p.description || "";
+        document.getElementById("tags").value        = (p.tags||[]).join(", ");
+        document.getElementById("body").value        = p.body  || "";
+        document.getElementById("enable-toc").checked = !!p.enable_toc;
+      } catch(e) { /* silently fail */ }
+    })();
+
+    fetch('/health').then(r=>r.json()).then(h=>{
+      const el = document.getElementById('repo-badge');
+      if (el && h.repo) el.textContent = h.repo;
+    });
   </script>
 </body>
 </html>""", 200, {"Content-Type": "text/html; charset=utf-8"}
@@ -595,7 +636,8 @@ def manage():
 <body>
   <div class="top-bar">
     <h1>BlogPusher</h1>
-    <nav style="display:flex;gap:16px">
+    <nav style="display:flex;align-items:center;gap:16px">
+      <span id="repo-badge" style="font-size:0.72rem;color:#444;font-family:monospace;margin-right:4px"></span>
       <a href="/" class="nav-link">New post</a>
       <a href="/setup-blog" class="nav-link">Setup blog</a>
     </nav>
@@ -617,6 +659,8 @@ def manage():
         const [healthResp, postsResp] = await Promise.all([fetch("/health"), fetch("/api/posts")]);
         const health = await healthResp.json();
         const data = await postsResp.json();
+        const badge = document.getElementById("repo-badge");
+        if (badge && health.repo) badge.textContent = health.repo;
         let siteUrl = (health.site_url || "").replace(/\/$/, "");
         if (siteUrl && !siteUrl.startsWith("http://") && !siteUrl.startsWith("https://")) {
           siteUrl = "https://" + siteUrl;
@@ -628,11 +672,12 @@ def manage():
           const row = document.createElement("div");
           row.className = "post-row";
           row.id = "row-" + slug;
-          const viewHref = siteUrl ? `${siteUrl}/posts/${slug}/` : "#";
+          const viewHref = siteUrl ? `${siteUrl}/posts/${slug.toLowerCase()}/` : "#";
           row.innerHTML = `
             <span class="post-slug">${slug}</span>
             <div class="post-actions">
               <a class="view-btn" href="${viewHref}" target="_blank">View</a>
+              <a class="view-btn" href="/?edit=${encodeURIComponent(slug)}">Edit</a>
               <button class="del-btn" onclick="deletePost('${slug}')">Delete</button>
             </div>
           `;
@@ -827,6 +872,43 @@ def publish():
     }), 200 if not errors else 207
 
 
+# ── API: fetch single post ─────────────────────────────────────────────────────
+@app.route("/api/post/<slug>", methods=["GET"])
+def get_post(slug):
+    r = requests.get(
+        f"{GITHUB_API}/repos/{GITHUB_REPO}/contents/content/posts/{slug}/index.md",
+        headers=gh_headers()
+    )
+    if r.status_code != 200:
+        return jsonify({"error": "Post not found"}), 404
+
+    content = base64.b64decode(r.json()["content"]).decode()
+    parts = content.split("---", 2)   # ["", "\nfm\n", "\nbody"]
+    fm = yaml.safe_load(parts[1]) if len(parts) >= 3 else {}
+    body = parts[2].strip() if len(parts) >= 3 else content.strip()
+
+    img_r = requests.get(
+        f"{GITHUB_API}/repos/{GITHUB_REPO}/contents/content/posts/{slug}",
+        headers=gh_headers()
+    )
+    existing_images = sorted([
+        f["name"] for f in (img_r.json() if img_r.status_code == 200 else [])
+        if f.get("type") == "file" and f["name"] != "index.md"
+    ])
+
+    tags = [t for t in (fm.get("tags") or []) if t != "blog"]
+
+    return jsonify({
+        "title": fm.get("title", ""),
+        "date": str(fm.get("date", "")),
+        "description": fm.get("description", ""),
+        "tags": tags,
+        "body": body,
+        "enable_toc": not fm.get("no_toc", False),
+        "existing_images": existing_images,
+    })
+
+
 # ── Setup blog page ────────────────────────────────────────────────────────────
 @app.route("/setup-blog", methods=["GET"])
 def setup_blog_page():
@@ -919,22 +1001,13 @@ def setup_blog_page():
 <body>
   <div class="top-bar">
     <h1>BlogPusher</h1>
-    <nav style="display:flex;gap:16px">
+    <nav style="display:flex;align-items:center;gap:16px">
+      <span id="repo-badge" style="font-size:0.72rem;color:#444;font-family:monospace;margin-right:4px"></span>
       <a href="/" class="nav-link">New post</a>
       <a href="/manage" class="nav-link">Manage</a>
     </nav>
   </div>
-  <p class="subtitle">Push the required layouts and assets to a Hugo (mana theme) repo to make it BlogPusher-compatible.</p>
-
-  <label>Target Repo</label>
-  <input type="text" id="repo" placeholder="friend/their-blog-repo">
-
-  <label>GitHub Token</label>
-  <input type="password" id="token" placeholder="ghp_...">
-  <p class="hint">Needs Contents read/write on the target repo.</p>
-
-  <label>Branch</label>
-  <input type="text" id="branch" value="main">
+  <p class="subtitle">Check and install the BlogPusher gallery templates into this instance's configured blog repo.</p>
 
   <label class="overwrite-row">
     <input type="checkbox" id="overwrite" onchange="updatePushBtn()">
@@ -963,12 +1036,7 @@ def setup_blog_page():
     let lastCheckResult = null;
 
     function getInputs() {
-      return {
-        repo:      document.getElementById("repo").value.trim(),
-        token:     document.getElementById("token").value.trim(),
-        branch:    document.getElementById("branch").value.trim() || "main",
-        overwrite: document.getElementById("overwrite").checked,
-      };
+      return { overwrite: document.getElementById("overwrite").checked };
     }
 
     function setResult(msg, type) {
@@ -1016,17 +1084,11 @@ def setup_blog_page():
     }
 
     async function checkFiles() {
-      const { repo, token } = getInputs();
-      if (!repo || !token) { setResult("Repo and token are required.", "err"); return; }
       const btn = document.getElementById("check-btn");
       btn.disabled = true;
       setResult("Checking…", "loading");
       try {
-        const r = await fetch("/api/verify", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ target_repo: repo, target_token: token }),
-        });
+        const r = await fetch("/api/verify", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
         const data = await r.json();
         if (!r.ok) { setResult("Error: " + (data.error || JSON.stringify(data)), "err"); btn.disabled = false; return; }
         const allPresent = renderChecklist(data.files);
@@ -1044,8 +1106,7 @@ def setup_blog_page():
     }
 
     async function pushFiles() {
-      const { repo, token, branch, overwrite } = getInputs();
-      if (!repo || !token) { setResult("Repo and token are required.", "err"); return; }
+      const { overwrite } = getInputs();
       const btn = document.getElementById("push-btn");
       btn.disabled = true;
       setResult("Pushing files…", "loading");
@@ -1053,7 +1114,7 @@ def setup_blog_page():
         const r = await fetch("/api/setup", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ target_repo: repo, target_token: token, target_branch: branch, overwrite }),
+          body: JSON.stringify({ overwrite }),
         });
         const data = await r.json();
         let parts = [];
@@ -1071,6 +1132,11 @@ def setup_blog_page():
         btn.disabled = false;
       }
     }
+
+    fetch('/health').then(r=>r.json()).then(h=>{
+      const el = document.getElementById('repo-badge');
+      if (el && h.repo) el.textContent = h.repo;
+    });
   </script>
 </body>
 </html>""", 200, {"Content-Type": "text/html; charset=utf-8"}
@@ -1079,34 +1145,16 @@ def setup_blog_page():
 # ── API: verify blog setup ──────────────────────────────────────────────────────
 @app.route("/api/verify", methods=["POST"])
 def verify_setup():
-    data = request.get_json(silent=True)
-    if not data:
-        return jsonify({"error": "Invalid JSON"}), 400
-    target_repo  = (data.get("target_repo") or "").strip()
-    target_token = (data.get("target_token") or "").strip()
-    if not target_repo or not target_token:
-        return jsonify({"error": "target_repo and target_token are required"}), 400
-
-    files = {}
-    for path in SETUP_FILES + SETUP_GITKEEPS:
-        files[path] = _get_sha_for(target_repo, path, target_token) is not None
-
+    files = {path: get_sha(path) is not None for path in SETUP_FILES + SETUP_GITKEEPS}
     return jsonify({"files": files, "all_present": all(files.values())})
 
 
 # ── API: push blog setup files ─────────────────────────────────────────────────
 @app.route("/api/setup", methods=["POST"])
 def setup_blog():
-    data = request.get_json(silent=True)
-    if not data:
-        return jsonify({"error": "Invalid JSON"}), 400
-    target_repo   = (data.get("target_repo") or "").strip()
-    target_token  = (data.get("target_token") or "").strip()
-    target_branch = (data.get("target_branch") or "main").strip()
-    overwrite     = bool(data.get("overwrite", False))
+    data = request.get_json(silent=True) or {}
+    overwrite = bool(data.get("overwrite", False))
 
-    if not target_repo or not target_token:
-        return jsonify({"error": "target_repo and target_token are required"}), 400
     if not os.path.isdir(THEME_FILES_DIR):
         return jsonify({"error": "hugo-theme-files not found in server image"}), 500
 
@@ -1117,19 +1165,19 @@ def setup_blog():
         if not os.path.exists(src):
             errors.append(f"{rel_path}: missing from image")
             continue
-        if not overwrite and _get_sha_for(target_repo, rel_path, target_token) is not None:
+        if not overwrite and get_sha(rel_path) is not None:
             skipped.append(rel_path)
             continue
         with open(src, "rb") as f:
             content = f.read()
-        ok, err = _push_file_to(target_repo, target_branch, target_token, rel_path, content, "setup: add BlogPusher theme files", is_binary=True)
+        ok, err = push_file(rel_path, content, "setup: add BlogPusher theme files", is_binary=True)
         (pushed if ok else errors).append(rel_path if ok else f"{rel_path}: {err}")
 
     for rel_path in SETUP_GITKEEPS:
-        if not overwrite and _get_sha_for(target_repo, rel_path, target_token) is not None:
+        if not overwrite and get_sha(rel_path) is not None:
             skipped.append(rel_path)
             continue
-        ok, err = _push_file_to(target_repo, target_branch, target_token, rel_path, b"", "setup: create image directories", is_binary=True)
+        ok, err = push_file(rel_path, b"", "setup: create image directories", is_binary=True)
         (pushed if ok else errors).append(rel_path if ok else f"{rel_path}: {err}")
 
     status = 200 if not errors else (207 if pushed else 500)

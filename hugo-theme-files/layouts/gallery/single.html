@@ -24,7 +24,13 @@
   <article class="single-post">
 
     {{/* ── Image Slider (sits where post-image-single normally goes) ───────── */}}
-    {{- $images := .Resources.ByType "image" }}
+    {{- $allImages := .Resources.ByType "image" }}
+    {{- $images := slice }}
+    {{- range $allImages }}
+      {{- if not (strings.HasPrefix .Name "_") }}
+        {{- $images = $images | append . }}
+      {{- end }}
+    {{- end }}
     {{- if $images }}
     <div class="gallery-slider post-image-single" id="gallery-slider"
          aria-label="Photo gallery" role="region">

@@ -8,7 +8,7 @@ import re
 import base64
 import requests
 from datetime import datetime
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, Response
 
 app = Flask(__name__)
 
@@ -406,6 +406,8 @@ And so on.</code></pre>
 
     let selectedFiles = [];
     let excludedFromSlider = new Set();
+    let existingEntries = []; // edit mode: [{name, origHidden, hidden, removed, bodyN}]
+    let editSlug = null;
 
     const EYE_ON = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>`;
     const EYE_OFF = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>`;
@@ -440,6 +442,27 @@ And so on.</code></pre>
       const grid = document.getElementById("preview-grid");
       const coverInGallery = document.getElementById("cover-in-gallery").checked;
       grid.innerHTML = "";
+      // Use max over ALL existing entries (incl. removed) to safely offset new image numbers
+      const maxExistingN = existingEntries.reduce((max, e) => Math.max(max, e.bodyN), 0);
+
+      // Existing images (edit mode only)
+      existingEntries.forEach((entry, i) => {
+        if (entry.removed) return;
+        const item = document.createElement("div");
+        item.className = "preview-item" + (entry.hidden ? " slider-hidden" : "");
+        const ext = entry.name.split('.').pop().toLowerCase();
+        const mdText = entry.hidden ? `![](_${entry.bodyN}-image.${ext})` : null;
+        item.innerHTML = `
+          <img src="/api/image/${encodeURIComponent(editSlug)}/${encodeURIComponent(entry.name)}" alt="">
+          <span class="badge">${entry.bodyN}</span>
+          <button class="remove-btn" onclick="removeExisting(${i})" title="Remove">&#x2715;</button>
+          <button class="eye-btn" onclick="toggleExistingSlider(${i})" title="${entry.hidden ? "Add to slider" : "Hide from slider"}">${entry.hidden ? EYE_OFF : EYE_ON}</button>
+          ${mdText ? `<button class="copy-md-btn" title="Copy markdown" onclick="copyMd(${JSON.stringify(mdText)}, this)">${COPY_ICON}</button>` : ""}
+        `;
+        grid.appendChild(item);
+      });
+
+      // New uploads
       selectedFiles.forEach((file, i) => {
         const hidden = excludedFromSlider.has(i);
         const item = document.createElement("div");
@@ -447,13 +470,13 @@ And so on.</code></pre>
         const url = URL.createObjectURL(file);
         let bodyN;
         if (i === 0 && !coverInGallery) bodyN = null;
-        else if (coverInGallery)        bodyN = i + 1;
-        else                            bodyN = i;
+        else if (coverInGallery)        bodyN = maxExistingN + i + 1;
+        else                            bodyN = maxExistingN + i;
         const ext = file.name.split('.').pop().toLowerCase();
         const mdText = (hidden && bodyN !== null) ? `![](_${bodyN}-image.${ext})` : null;
         item.innerHTML = `
           <img src="${url}" alt="">
-          <span class="badge">${i === 0 ? "Cover" : i + 1}</span>
+          <span class="badge">${i === 0 ? "Cover" : bodyN}</span>
           <button class="remove-btn" onclick="removePhoto(${i})" title="Remove">&#x2715;</button>
           <button class="eye-btn" onclick="toggleSlider(${i})" title="${hidden ? "Add to slider" : "Hide from slider"}">${hidden ? EYE_OFF : EYE_ON}</button>
           ${mdText ? `<button class="copy-md-btn" title="Copy markdown" onclick="copyMd(${JSON.stringify(mdText)}, this)">${COPY_ICON}</button>` : ""}
@@ -476,6 +499,16 @@ And so on.</code></pre>
     function toggleSlider(i) {
       if (excludedFromSlider.has(i)) excludedFromSlider.delete(i);
       else excludedFromSlider.add(i);
+      renderPreviews();
+    }
+
+    function removeExisting(i) {
+      existingEntries[i].removed = true;
+      renderPreviews();
+    }
+
+    function toggleExistingSlider(i) {
+      existingEntries[i].hidden = !existingEntries[i].hidden;
       renderPreviews();
     }
 
@@ -527,13 +560,19 @@ And so on.</code></pre>
         }
       }
 
+      const maxExistingN = existingEntries.reduce((max, e) => Math.max(max, e.bodyN), 0);
+      const image_start = maxExistingN + 1;
+      const existing_edits = existingEntries
+        .filter(e => e.removed || e.hidden !== e.origHidden)
+        .map(e => ({name: e.name, hidden: e.hidden, remove: e.removed}));
+
       setStatus("Pushing to GitHub...", "loading");
 
       try {
         const resp = await fetch("/publish", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ title, date, description, tags, body, cover_image, images, enable_toc: enableToc }),
+          body: JSON.stringify({ title, date, description, tags, body, cover_image, images, enable_toc: enableToc, image_start, existing_edits }),
         });
         const result = await resp.json();
         if (resp.ok) {
@@ -544,7 +583,7 @@ And so on.</code></pre>
           document.getElementById("tags").value = "";
           document.getElementById("enable-toc").checked = false;
           dateInput.value = new Date().toISOString().split("T")[0];
-          selectedFiles = []; excludedFromSlider = new Set(); renderPreviews();
+          selectedFiles = []; excludedFromSlider = new Set(); existingEntries = []; editSlug = null; renderPreviews();
         } else {
           setStatus("Error: " + (result.error || JSON.stringify(result)), "err");
         }
@@ -555,7 +594,7 @@ And so on.</code></pre>
     }
 
     (async function() {
-      const editSlug = new URLSearchParams(window.location.search).get("edit");
+      editSlug = new URLSearchParams(window.location.search).get("edit");
       if (!editSlug) return;
       document.getElementById("publish-btn").textContent = "Update Post";
       document.getElementById("edit-banner-slug").textContent = editSlug;
@@ -570,6 +609,13 @@ And so on.</code></pre>
         document.getElementById("tags").value        = (p.tags||[]).join(", ");
         document.getElementById("body").value        = p.body  || "";
         document.getElementById("enable-toc").checked = !!p.enable_toc;
+        existingEntries = (p.existing_images || []).map(name => {
+          const hidden = name.startsWith("_");
+          const match = name.match(/^_?(\d+)-image\./);
+          const bodyN = match ? parseInt(match[1]) : 0;
+          return {name, origHidden: hidden, hidden, removed: false, bodyN};
+        });
+        renderPreviews();
       } catch(e) { /* silently fail */ }
     })();
 
@@ -814,6 +860,54 @@ def publish():
     slug = slugify(title)
     results, errors = [], []
 
+    # Process edits to existing images (edit mode)
+    existing_edits = data.get("existing_edits") or []
+    for edit in existing_edits:
+        ename = (edit.get("name") or "").strip()
+        if not ename or "/" in ename or ".." in ename:
+            continue
+        old_path = f"content/posts/{slug}/{ename}"
+        if edit.get("remove"):
+            sha = get_sha(old_path)
+            if sha:
+                dr = requests.delete(
+                    f"{GITHUB_API}/repos/{GITHUB_REPO}/contents/{old_path}",
+                    headers=gh_headers(),
+                    json={"message": f"edit: remove {ename}", "sha": sha, "branch": GITHUB_BRANCH}
+                )
+                (results if dr.status_code in (200, 201) else errors).append(
+                    ("+ " if dr.status_code in (200, 201) else "- ") + f"del:{old_path}"
+                )
+        else:
+            was_hidden = ename.startswith("_")
+            new_hidden = bool(edit.get("hidden", was_hidden))
+            if new_hidden != was_hidden:
+                base = ename.lstrip("_")
+                new_name = ("_" + base) if new_hidden else base
+                new_path = f"content/posts/{slug}/{new_name}"
+                r_old = requests.get(
+                    f"{GITHUB_API}/repos/{GITHUB_REPO}/contents/{old_path}", headers=gh_headers()
+                )
+                if r_old.status_code == 200:
+                    content_b64 = r_old.json()["content"].replace("\n", "")
+                    old_sha = r_old.json()["sha"]
+                    pr = requests.put(
+                        f"{GITHUB_API}/repos/{GITHUB_REPO}/contents/{new_path}",
+                        headers=gh_headers(),
+                        json={"message": f"edit: rename {ename} to {new_name}", "content": content_b64, "branch": GITHUB_BRANCH}
+                    )
+                    if pr.status_code in (200, 201):
+                        requests.delete(
+                            f"{GITHUB_API}/repos/{GITHUB_REPO}/contents/{old_path}",
+                            headers=gh_headers(),
+                            json={"message": f"edit: remove old {ename}", "sha": old_sha, "branch": GITHUB_BRANCH}
+                        )
+                        results.append(f"+ rename:{ename}→{new_name}")
+                    else:
+                        errors.append(f"rename failed: {ename}")
+
+    image_start = max(int(data.get("image_start", 1)), 1)
+
     # Cover image → assets/images/ and static/images/
     cover_filename = None
     if cover_raw:
@@ -828,7 +922,7 @@ def publish():
             errors.append(f"Cover error: {e}")
 
     # Body images — hidden flag adds _ prefix to exclude from slider
-    for i, img in enumerate(images_raw, start=1):
+    for i, img in enumerate(images_raw, start=image_start):
         try:
             img_bytes = base64.b64decode(img["data"])
             ext = img["filename"].rsplit(".", 1)[-1].lower()
@@ -870,6 +964,24 @@ def publish():
         "pushed": results,
         "errors": errors,
     }), 200 if not errors else 207
+
+
+# ── API: proxy image from post bundle (for edit preview) ───────────────────────
+@app.route("/api/image/<slug>/<filename>", methods=["GET"])
+def get_image(slug, filename):
+    if "/" in filename or ".." in filename:
+        return "", 400
+    r = requests.get(
+        f"{GITHUB_API}/repos/{GITHUB_REPO}/contents/content/posts/{slug}/{filename}",
+        headers=gh_headers()
+    )
+    if r.status_code != 200:
+        return "", 404
+    img_bytes = base64.b64decode(r.json()["content"])
+    ext = filename.rsplit(".", 1)[-1].lower()
+    mime = {"jpg": "image/jpeg", "jpeg": "image/jpeg", "png": "image/png",
+            "gif": "image/gif", "webp": "image/webp"}.get(ext, "image/octet-stream")
+    return Response(img_bytes, mimetype=mime)
 
 
 # ── API: fetch single post ─────────────────────────────────────────────────────

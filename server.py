@@ -80,15 +80,19 @@ def require_config():
 </head>
 <body>
   <h1>BlogPusher is not configured</h1>
-  <p>No <code>config.yaml</code> was found at <code class="path">{config_path}</code>.</p>
-  <p>Create that file with your GitHub details:</p>
+  <p><strong>Unraid / Docker:</strong> set these environment variables in your container config:</p>
+  <pre><code>GITHUB_TOKEN   ghp_your_token_here
+GITHUB_REPO    youruser/your-blog-repo
+SITE_URL       https://your-blog-url.com
+GITHUB_BRANCH  main</code></pre>
+  <p>Then restart the container.</p>
+  <p style="margin-top:16px"><strong>Docker Compose:</strong> create <code class="path">{config_path}</code>:</p>
   <pre><code>github_token: ghp_your_token_here
 github_repo: youruser/your-blog-repo
 github_branch: main
 site_url: https://your-blog-url.com</code></pre>
-  <p>Then restart the container. Need a token? Create a fine-grained PAT at
-  <code>github.com/settings/tokens</code> with <strong>Contents read/write</strong>
-  on your blog repo.</p>
+  <p>Need a token? Create a fine-grained PAT at <code>github.com/settings/tokens</code>
+  with <strong>Contents read/write</strong> on your blog repo.</p>
 </body>
 </html>""", 200, {{"Content-Type": "text/html; charset=utf-8"}}
 

@@ -25,21 +25,54 @@
     Target="5000"
     Default="5000"
     Mode="tcp"
-    Description="Host port for the BlogPusher web interface. Change this if running multiple instances."
+    Description="Host port for the BlogPusher web interface. Change this if running multiple instances for different blogs."
     Type="Port"
     Display="always"
     Required="true"
     Mask="false">5000</Config>
 
   <Config
-    Name="Config File"
-    Target="/app/config.yaml"
-    Default="/mnt/user/appdata/blogpusher/config.yaml"
-    Mode="ro"
-    Description="Full path to your config.yaml file. Needs github_token, github_repo, github_branch, site_url. If running multiple instances, each needs its OWN config.yaml at a unique path."
-    Type="Path"
+    Name="GitHub Token"
+    Target="GITHUB_TOKEN"
+    Default=""
+    Mode=""
+    Description="GitHub Personal Access Token with Contents read/write on your blog repo. Create at github.com/settings/tokens (fine-grained, select your blog repo, enable Contents read/write)."
+    Type="Variable"
     Display="always"
     Required="true"
-    Mask="false">/mnt/user/appdata/blogpusher/config.yaml</Config>
+    Mask="true"></Config>
+
+  <Config
+    Name="GitHub Repo"
+    Target="GITHUB_REPO"
+    Default=""
+    Mode=""
+    Description="Your blog repo in owner/repo format — e.g. yourname/blog"
+    Type="Variable"
+    Display="always"
+    Required="true"
+    Mask="false"></Config>
+
+  <Config
+    Name="Site URL"
+    Target="SITE_URL"
+    Default=""
+    Mode=""
+    Description="Your blog's public URL — e.g. https://yourname.github.io or https://yourdomain.com"
+    Type="Variable"
+    Display="always"
+    Required="true"
+    Mask="false"></Config>
+
+  <Config
+    Name="GitHub Branch"
+    Target="GITHUB_BRANCH"
+    Default="main"
+    Mode=""
+    Description="Branch to push posts to. Almost always main."
+    Type="Variable"
+    Display="advanced"
+    Required="false"
+    Mask="false">main</Config>
 
 </Container>

@@ -1,0 +1,45 @@
+<?xml version="1.0"?>
+<Container version="2">
+  <Name>BlogPusher</Name>
+  <Repository>ghcr.io/emenblade/blogpusher:latest</Repository>
+  <Registry>https://github.com/emenblade/blogpusher/pkgs/container/blogpusher</Registry>
+  <Network>bridge</Network>
+  <Shell>sh</Shell>
+  <Privileged>false</Privileged>
+  <Support>https://github.com/emenblade/blogpusher/issues</Support>
+  <Project>https://github.com/emenblade/blogpusher</Project>
+  <Overview>Self-hosted blog publishing server for Hugo + GitHub Pages sites. Draft posts with Claude on mobile, send via HTTP Shortcuts, and BlogPusher pushes them directly to your GitHub repo via the API — no git CLI required. Includes a web UI for publishing, managing, and setting up new blogs.</Overview>
+  <Category>Tools: Network:Web</Category>
+  <WebUI>http://[IP]:[PORT:5000]/</WebUI>
+  <TemplateURL>https://raw.githubusercontent.com/emenblade/blogpusher/main/unraid-template.xml</TemplateURL>
+  <Icon>https://raw.githubusercontent.com/emenblade/blogpusher/main/Icon.png</Icon>
+  <ExtraParams/>
+  <PostArgs/>
+  <CPUset/>
+  <DonateText/>
+  <DonateLink/>
+  <Description>Self-hosted blog publishing server for Hugo + GitHub Pages sites. Draft posts with Claude on mobile, send via HTTP Shortcuts, and BlogPusher pushes them directly to your GitHub repo via the API — no git CLI required. Includes a web UI for publishing, managing, and setting up new blogs.</Description>
+
+  <Config
+    Name="Web UI Port"
+    Target="5000"
+    Default="5000"
+    Mode="tcp"
+    Description="Host port for the BlogPusher web interface. Change this if running multiple instances."
+    Type="Port"
+    Display="always"
+    Required="true"
+    Mask="false">5000</Config>
+
+  <Config
+    Name="Config File"
+    Target="/app/config.yaml"
+    Default="/mnt/user/appdata/blogpusher/config.yaml"
+    Mode="ro"
+    Description="Full path to your config.yaml file. Create it from the example at github.com/emenblade/blogpusher — needs github_token, github_repo, github_branch, site_url."
+    Type="Path"
+    Display="always"
+    Required="true"
+    Mask="false">/mnt/user/appdata/blogpusher/config.yaml</Config>
+
+</Container>

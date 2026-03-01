@@ -58,7 +58,7 @@
     Target="SITE_URL"
     Default=""
     Mode=""
-    Description="Your blog's public URL — e.g. https://yourname.github.io or https://yourdomain.com"
+    Description="Your blog's public URL — e.g. https://yourname.github.io or just yourname.github.io (https:// is optional)"
     Type="Variable"
     Display="always"
     Required="true"

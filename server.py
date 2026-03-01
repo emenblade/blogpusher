@@ -31,6 +31,23 @@ SITE_URL      = _cfg("site_url",      "SITE_URL")
 
 GITHUB_API    = "https://api.github.com"
 
+# ── Hugo compat setup ──────────────────────────────────────────────────────────
+THEME_FILES_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "hugo-theme-files")
+
+SETUP_FILES = [
+    "layouts/gallery/single.html",
+    "layouts/gallery/list.html",
+    "layouts/posts/gallery.html",
+    "layouts/partials/toc.html",
+    "static/css/gallery.css",
+    "static/js/gallery.js",
+]
+
+SETUP_GITKEEPS = [
+    "assets/images/.gitkeep",
+    "static/images/.gitkeep",
+]
+
 app.config["MAX_CONTENT_LENGTH"] = 50 * 1024 * 1024  # 50MB max upload
 
 
@@ -59,6 +76,25 @@ def push_file(path, data, message, is_binary=False):
         headers=gh_headers(),
         json=payload,
     )
+    ok = r.status_code in (200, 201)
+    return ok, r.json().get("message", "") if not ok else ""
+
+
+# ── Target-repo helpers (for setup endpoint) ───────────────────────────────────
+def _gh_headers_for(token):
+    return {"Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json"}
+
+def _get_sha_for(repo, path, token):
+    r = requests.get(f"{GITHUB_API}/repos/{repo}/contents/{path}", headers=_gh_headers_for(token))
+    return r.json().get("sha") if r.status_code == 200 else None
+
+def _push_file_to(repo, branch, token, path, data, message, is_binary=False):
+    encoded = base64.b64encode(data if is_binary else data.encode()).decode()
+    payload = {"message": message, "content": encoded, "branch": branch}
+    sha = _get_sha_for(repo, path, token)
+    if sha:
+        payload["sha"] = sha
+    r = requests.put(f"{GITHUB_API}/repos/{repo}/contents/{path}", headers=_gh_headers_for(token), json=payload)
     ok = r.status_code in (200, 201)
     return ok, r.json().get("message", "") if not ok else ""
 
@@ -219,7 +255,10 @@ def form():
 <body>
   <div class="top-bar">
     <h1>BlogPusher</h1>
-    <a href="/manage" class="nav-link">Manage posts →</a>
+    <nav style="display:flex;gap:16px">
+      <a href="/manage" class="nav-link">Manage</a>
+      <a href="/setup-blog" class="nav-link">Setup blog</a>
+    </nav>
   </div>
   <p class="subtitle">Fill in the fields, upload your photos, publish.</p>
 
@@ -510,7 +549,10 @@ def manage():
 <body>
   <div class="top-bar">
     <h1>BlogPusher</h1>
-    <a href="/" class="nav-link">← New post</a>
+    <nav style="display:flex;gap:16px">
+      <a href="/" class="nav-link">New post</a>
+      <a href="/setup-blog" class="nav-link">Setup blog</a>
+    </nav>
   </div>
   <p class="subtitle">Delete published posts. This removes the post folder and cover image from the repo.</p>
 
@@ -731,6 +773,315 @@ def publish():
         "pushed": results,
         "errors": errors,
     }), 200 if not errors else 207
+
+
+# ── Setup blog page ────────────────────────────────────────────────────────────
+@app.route("/setup-blog", methods=["GET"])
+def setup_blog_page():
+    return r"""<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>BlogPusher — Setup</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: #0f0f0f; color: #e2e2e2;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      padding: 20px 16px 48px; max-width: 600px; margin: 0 auto;
+    }
+    .top-bar { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 4px; }
+    h1 { font-size: 1.4rem; font-weight: 700; color: #a78bfa; }
+    .nav-link { font-size: 0.8rem; color: #7c3aed; text-decoration: none; }
+    .nav-link:hover { color: #a78bfa; }
+    .subtitle { font-size: 0.8rem; color: #555; margin-bottom: 24px; }
+    label {
+      display: block; font-size: 0.75rem; font-weight: 600; color: #888;
+      text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 6px; margin-top: 18px;
+    }
+    input[type="text"], input[type="password"] {
+      width: 100%; background: #1a1a1a; color: #e2e2e2;
+      border: 1px solid #2a2a2a; border-radius: 10px; padding: 12px 14px;
+      font-size: 0.95rem; font-family: inherit; outline: none;
+      transition: border-color 0.15s; -webkit-appearance: none;
+    }
+    input[type="text"]:focus, input[type="password"]:focus { border-color: #7c3aed; }
+    .hint { font-size: 0.75rem; color: #555; margin-top: 5px; }
+    .btn-row { display: flex; gap: 10px; margin-top: 22px; }
+    .btn {
+      padding: 14px 20px; border-radius: 10px; font-size: 0.95rem; font-weight: 600;
+      cursor: pointer; border: none; transition: background 0.15s, transform 0.1s;
+    }
+    .btn:active { transform: scale(0.98); }
+    .btn:disabled { cursor: not-allowed; opacity: 0.5; }
+    #check-btn { background: #2a2a2a; color: #a78bfa; flex: 1; }
+    #check-btn:hover:not(:disabled) { background: #3a2a5a; }
+    #push-btn { background: #7c3aed; color: white; flex: 2; display: none; }
+    #push-btn:hover:not(:disabled) { background: #6d28d9; }
+    #checklist { margin-top: 20px; display: none; }
+    .check-header {
+      font-size: 0.7rem; font-weight: 700; color: #555;
+      text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 10px;
+    }
+    .file-row {
+      display: flex; align-items: center; gap: 10px;
+      padding: 8px 12px; background: #1a1a1a; border-radius: 8px; margin-bottom: 6px;
+      border: 1px solid #2a2a2a;
+    }
+    .file-status { font-size: 1rem; flex-shrink: 0; width: 20px; text-align: center; }
+    .file-path { font-family: "Menlo","Courier New",monospace; font-size: 0.78rem; color: #c4b5fd; }
+    .file-note { font-size: 0.72rem; color: #555; margin-left: auto; flex-shrink: 0; }
+    #result {
+      margin-top: 16px; padding: 14px; border-radius: 10px;
+      font-size: 0.88rem; display: none; line-height: 1.7;
+    }
+    .result-ok      { background: #0d2e1a; color: #4ade80; border: 1px solid #16532d; }
+    .result-err     { background: #2e0d0d; color: #f87171; border: 1px solid #7f1d1d; }
+    .result-loading { background: #1a1430; color: #a78bfa; border: 1px solid #4c1d95; }
+    .result-partial { background: #1a1a0d; color: #fbbf24; border: 1px solid #713f12; }
+    #manual-step {
+      margin-top: 20px; padding: 16px; border-radius: 10px;
+      background: #141414; border: 1px solid #2a2a2a; display: none;
+    }
+    #manual-step h3 {
+      font-size: 0.72rem; font-weight: 700; color: #a78bfa;
+      text-transform: uppercase; letter-spacing: 0.07em; margin-bottom: 10px;
+    }
+    #manual-step p { font-size: 0.82rem; color: #777; line-height: 1.65; }
+    #manual-step p + p { margin-top: 8px; }
+    #manual-step code {
+      font-family: "Menlo","Courier New",monospace; font-size: 0.78rem;
+      background: #1a1a1a; color: #c4b5fd; padding: 1px 5px; border-radius: 4px;
+    }
+    #manual-step pre {
+      background: #0f0f0f; border: 1px solid #2a2a2a; border-radius: 8px;
+      padding: 10px 12px; margin-top: 8px; overflow-x: auto;
+    }
+    #manual-step pre code { background: none; padding: 0; }
+    .overwrite-row { display: flex; align-items: center; gap: 10px; margin-top: 16px; cursor: pointer; }
+    .overwrite-row input[type="checkbox"] { width: 16px; height: 16px; accent-color: #7c3aed; }
+    .overwrite-row span { font-size: 0.82rem; color: #555; }
+  </style>
+</head>
+<body>
+  <div class="top-bar">
+    <h1>BlogPusher</h1>
+    <nav style="display:flex;gap:16px">
+      <a href="/" class="nav-link">New post</a>
+      <a href="/manage" class="nav-link">Manage</a>
+    </nav>
+  </div>
+  <p class="subtitle">Push the required layouts and assets to a Hugo (mana theme) repo to make it BlogPusher-compatible.</p>
+
+  <label>Target Repo</label>
+  <input type="text" id="repo" placeholder="friend/their-blog-repo">
+
+  <label>GitHub Token</label>
+  <input type="password" id="token" placeholder="ghp_...">
+  <p class="hint">Needs Contents read/write on the target repo.</p>
+
+  <label>Branch</label>
+  <input type="text" id="branch" value="main">
+
+  <label class="overwrite-row">
+    <input type="checkbox" id="overwrite" onchange="updatePushBtn()">
+    <span>Overwrite files that already exist</span>
+  </label>
+
+  <div class="btn-row">
+    <button id="check-btn" class="btn" onclick="checkFiles()">Check files</button>
+    <button id="push-btn" class="btn" onclick="pushFiles()">Push missing files</button>
+  </div>
+
+  <div id="checklist">
+    <p class="check-header" style="margin-top:20px">File status</p>
+    <div id="file-rows"></div>
+  </div>
+  <div id="result"></div>
+
+  <div id="manual-step">
+    <h3>One manual step remaining</h3>
+    <p>Add this line to your site's <code>layouts/partials/head.html</code> (just before <code>&lt;/head&gt;</code> or wherever you include styles):</p>
+    <pre><code>&lt;link rel="stylesheet" href="/css/gallery.css"&gt;</code></pre>
+    <p>If you don't have a <code>head.html</code> override yet, copy it from <code>themes/mana/layouts/partials/head.html</code> into <code>layouts/partials/head.html</code> first, then add the line.</p>
+  </div>
+
+  <script>
+    let lastCheckResult = null;
+
+    function getInputs() {
+      return {
+        repo:      document.getElementById("repo").value.trim(),
+        token:     document.getElementById("token").value.trim(),
+        branch:    document.getElementById("branch").value.trim() || "main",
+        overwrite: document.getElementById("overwrite").checked,
+      };
+    }
+
+    function setResult(msg, type) {
+      const el = document.getElementById("result");
+      el.style.display = "block"; el.className = "result-" + type; el.innerHTML = msg;
+    }
+
+    function updatePushBtn() {
+      if (!lastCheckResult) return;
+      const overwrite = document.getElementById("overwrite").checked;
+      const missing = Object.values(lastCheckResult).filter(v => !v).length;
+      const total = Object.keys(lastCheckResult).length;
+      const btn = document.getElementById("push-btn");
+      if (overwrite) {
+        btn.textContent = `Push all ${total} files`;
+        btn.style.display = "block";
+      } else if (missing > 0) {
+        btn.textContent = `Push ${missing} missing file${missing > 1 ? "s" : ""}`;
+        btn.style.display = "block";
+      } else {
+        btn.style.display = "none";
+      }
+    }
+
+    function renderChecklist(files) {
+      lastCheckResult = files;
+      const cl = document.getElementById("checklist");
+      const rows = document.getElementById("file-rows");
+      cl.style.display = "block";
+      rows.innerHTML = "";
+      for (const [path, present] of Object.entries(files)) {
+        const row = document.createElement("div");
+        row.className = "file-row";
+        row.style.borderColor = present ? "#16532d" : "#7f1d1d";
+        const note = path.endsWith(".gitkeep") ? "directory placeholder" : "";
+        row.innerHTML = `
+          <span class="file-status">${present ? "✓" : "✗"}</span>
+          <span class="file-path">${path}</span>
+          ${note ? `<span class="file-note">${note}</span>` : ""}
+        `;
+        rows.appendChild(row);
+      }
+      updatePushBtn();
+      return Object.values(files).every(Boolean);
+    }
+
+    async function checkFiles() {
+      const { repo, token } = getInputs();
+      if (!repo || !token) { setResult("Repo and token are required.", "err"); return; }
+      const btn = document.getElementById("check-btn");
+      btn.disabled = true;
+      setResult("Checking…", "loading");
+      try {
+        const r = await fetch("/api/verify", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ target_repo: repo, target_token: token }),
+        });
+        const data = await r.json();
+        if (!r.ok) { setResult("Error: " + (data.error || JSON.stringify(data)), "err"); btn.disabled = false; return; }
+        const allPresent = renderChecklist(data.files);
+        if (allPresent) {
+          setResult("All files are present. This repo is ready for BlogPusher.", "ok");
+          document.getElementById("manual-step").style.display = "block";
+        } else {
+          const missing = Object.values(data.files).filter(v => !v).length;
+          setResult(`${missing} file${missing > 1 ? "s" : ""} missing — click the button above to install them.`, "partial");
+        }
+      } catch(e) {
+        setResult("Could not reach server: " + e.message, "err");
+      }
+      btn.disabled = false;
+    }
+
+    async function pushFiles() {
+      const { repo, token, branch, overwrite } = getInputs();
+      if (!repo || !token) { setResult("Repo and token are required.", "err"); return; }
+      const btn = document.getElementById("push-btn");
+      btn.disabled = true;
+      setResult("Pushing files…", "loading");
+      try {
+        const r = await fetch("/api/setup", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ target_repo: repo, target_token: token, target_branch: branch, overwrite }),
+        });
+        const data = await r.json();
+        let parts = [];
+        if (data.pushed?.length)  parts.push(`Pushed: ${data.pushed.map(f => `<code>${f}</code>`).join(", ")}`);
+        if (data.skipped?.length) parts.push(`Already present: ${data.skipped.map(f => `<code>${f}</code>`).join(", ")}`);
+        if (data.errors?.length)  parts.push(`Errors: ${data.errors.join(", ")}`);
+        const type = data.errors?.length ? (data.pushed?.length ? "partial" : "err") : "ok";
+        setResult(parts.join("<br>") || "Done.", type);
+        if (!data.errors?.length) {
+          document.getElementById("manual-step").style.display = "block";
+        }
+        await checkFiles();
+      } catch(e) {
+        setResult("Could not reach server: " + e.message, "err");
+        btn.disabled = false;
+      }
+    }
+  </script>
+</body>
+</html>""", 200, {"Content-Type": "text/html; charset=utf-8"}
+
+
+# ── API: verify blog setup ──────────────────────────────────────────────────────
+@app.route("/api/verify", methods=["POST"])
+def verify_setup():
+    data = request.get_json(silent=True)
+    if not data:
+        return jsonify({"error": "Invalid JSON"}), 400
+    target_repo  = (data.get("target_repo") or "").strip()
+    target_token = (data.get("target_token") or "").strip()
+    if not target_repo or not target_token:
+        return jsonify({"error": "target_repo and target_token are required"}), 400
+
+    files = {}
+    for path in SETUP_FILES + SETUP_GITKEEPS:
+        files[path] = _get_sha_for(target_repo, path, target_token) is not None
+
+    return jsonify({"files": files, "all_present": all(files.values())})
+
+
+# ── API: push blog setup files ─────────────────────────────────────────────────
+@app.route("/api/setup", methods=["POST"])
+def setup_blog():
+    data = request.get_json(silent=True)
+    if not data:
+        return jsonify({"error": "Invalid JSON"}), 400
+    target_repo   = (data.get("target_repo") or "").strip()
+    target_token  = (data.get("target_token") or "").strip()
+    target_branch = (data.get("target_branch") or "main").strip()
+    overwrite     = bool(data.get("overwrite", False))
+
+    if not target_repo or not target_token:
+        return jsonify({"error": "target_repo and target_token are required"}), 400
+    if not os.path.isdir(THEME_FILES_DIR):
+        return jsonify({"error": "hugo-theme-files not found in server image"}), 500
+
+    pushed, skipped, errors = [], [], []
+
+    for rel_path in SETUP_FILES:
+        src = os.path.join(THEME_FILES_DIR, rel_path.replace("/", os.sep))
+        if not os.path.exists(src):
+            errors.append(f"{rel_path}: missing from image")
+            continue
+        if not overwrite and _get_sha_for(target_repo, rel_path, target_token) is not None:
+            skipped.append(rel_path)
+            continue
+        with open(src, "rb") as f:
+            content = f.read()
+        ok, err = _push_file_to(target_repo, target_branch, target_token, rel_path, content, "setup: add BlogPusher theme files", is_binary=True)
+        (pushed if ok else errors).append(rel_path if ok else f"{rel_path}: {err}")
+
+    for rel_path in SETUP_GITKEEPS:
+        if not overwrite and _get_sha_for(target_repo, rel_path, target_token) is not None:
+            skipped.append(rel_path)
+            continue
+        ok, err = _push_file_to(target_repo, target_branch, target_token, rel_path, b"", "setup: create image directories", is_binary=True)
+        (pushed if ok else errors).append(rel_path if ok else f"{rel_path}: {err}")
+
+    status = 200 if not errors else (207 if pushed else 500)
+    return jsonify({"pushed": pushed, "skipped": skipped, "errors": errors}), status
 
 
 if __name__ == "__main__":

@@ -6,6 +6,7 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY server.py .
+COPY hugo-theme-files/ ./hugo-theme-files/
 
 EXPOSE 5000
 

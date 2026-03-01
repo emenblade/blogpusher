@@ -36,7 +36,7 @@
     Target="/app/config.yaml"
     Default="/mnt/user/appdata/blogpusher/config.yaml"
     Mode="ro"
-    Description="Full path to your config.yaml file. Create it from the example at github.com/emenblade/blogpusher — needs github_token, github_repo, github_branch, site_url."
+    Description="Full path to your config.yaml file. Needs github_token, github_repo, github_branch, site_url. If running multiple instances, each needs its OWN config.yaml at a unique path."
     Type="Path"
     Display="always"
     Required="true"

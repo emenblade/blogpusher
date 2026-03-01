@@ -28,6 +28,7 @@ GITHUB_TOKEN  = _cfg("github_token",  "GITHUB_TOKEN")
 GITHUB_REPO   = _cfg("github_repo",   "GITHUB_REPO")
 GITHUB_BRANCH = _cfg("github_branch", "GITHUB_BRANCH", "main")
 SITE_URL      = _cfg("site_url",      "SITE_URL")
+CONFIGURED    = bool(GITHUB_TOKEN and GITHUB_REPO)
 
 GITHUB_API    = "https://api.github.com"
 
@@ -49,6 +50,47 @@ SETUP_GITKEEPS = [
 ]
 
 app.config["MAX_CONTENT_LENGTH"] = 50 * 1024 * 1024  # 50MB max upload
+
+_UNCONFIGURED_PASSTHROUGH = {"/health", "/setup-blog", "/api/verify", "/api/setup"}
+
+@app.before_request
+def require_config():
+    if CONFIGURED:
+        return
+    if request.path in _UNCONFIGURED_PASSTHROUGH or request.path.startswith("/static"):
+        return
+    config_path = os.environ.get("CONFIG_FILE", "/app/config.yaml")
+    return f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>BlogPusher — Setup required</title>
+  <style>
+    body{{background:#0f0f0f;color:#e2e2e2;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+      padding:40px 20px;max-width:560px;margin:0 auto;}}
+    h1{{color:#a78bfa;font-size:1.3rem;margin-bottom:6px;}}
+    p{{color:#777;font-size:0.88rem;line-height:1.7;margin-top:12px;}}
+    code{{font-family:"Menlo","Courier New",monospace;font-size:0.8rem;background:#1a1a1a;
+      color:#c4b5fd;padding:1px 5px;border-radius:4px;}}
+    pre{{background:#141414;border:1px solid #2a2a2a;border-radius:10px;padding:14px 16px;
+      margin-top:10px;overflow-x:auto;}}
+    pre code{{background:none;padding:0;color:#c4b5fd;font-size:0.82rem;line-height:1.7;}}
+    .path{{color:#fbbf24;}}
+  </style>
+</head>
+<body>
+  <h1>BlogPusher is not configured</h1>
+  <p>No <code>config.yaml</code> was found at <code class="path">{config_path}</code>.</p>
+  <p>Create that file with your GitHub details:</p>
+  <pre><code>github_token: ghp_your_token_here
+github_repo: youruser/your-blog-repo
+github_branch: main
+site_url: https://your-blog-url.com</code></pre>
+  <p>Then restart the container. Need a token? Create a fine-grained PAT at
+  <code>github.com/settings/tokens</code> with <strong>Contents read/write</strong>
+  on your blog repo.</p>
+</body>
+</html>""", 200, {{"Content-Type": "text/html; charset=utf-8"}}
 
 
 # ── GitHub helpers ─────────────────────────────────────────────────────────────
@@ -110,7 +152,7 @@ def slugify(title):
 # ── Routes ────────────────────────────────────────────────────────────────────
 @app.route("/health")
 def health():
-    return jsonify({"status": "ok", "repo": GITHUB_REPO, "configured": bool(GITHUB_TOKEN and GITHUB_REPO)})
+    return jsonify({"status": "ok", "repo": GITHUB_REPO, "configured": CONFIGURED, "site_url": SITE_URL})
 
 
 @app.route("/", methods=["GET"])
@@ -568,19 +610,22 @@ def manage():
     async function loadPosts() {
       const list = document.getElementById("post-list");
       try {
-        const r = await fetch("/api/posts");
-        const data = await r.json();
-        if (!r.ok) { list.innerHTML = `<p class="empty">Error: ${data.error}</p>`; return; }
+        const [healthResp, postsResp] = await Promise.all([fetch("/health"), fetch("/api/posts")]);
+        const health = await healthResp.json();
+        const data = await postsResp.json();
+        const siteUrl = (health.site_url || "").replace(/\/$/, "");
+        if (!postsResp.ok) { list.innerHTML = `<p class="empty">Error: ${data.error}</p>`; return; }
         if (!data.posts.length) { list.innerHTML = `<p class="empty">No posts found.</p>`; return; }
         list.innerHTML = "";
         for (const slug of data.posts) {
           const row = document.createElement("div");
           row.className = "post-row";
           row.id = "row-" + slug;
+          const viewHref = siteUrl ? `${siteUrl}/posts/${slug}/` : "#";
           row.innerHTML = `
             <span class="post-slug">${slug}</span>
             <div class="post-actions">
-              <a class="view-btn" href="https://blog.emen.win/posts/${slug}/" target="_blank">View</a>
+              <a class="view-btn" href="${viewHref}" target="_blank">View</a>
               <button class="del-btn" onclick="deletePost('${slug}')">Delete</button>
             </div>
           `;

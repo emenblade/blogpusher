@@ -4,7 +4,7 @@ services:
     container_name: blogpusher
     restart: unless-stopped
     ports:
-      - "5000:5000"   # change left side for multiple instances (e.g. 5001:5000)
+      - "${HOST_PORT:-5000}:5000"   # set HOST_PORT env var or in .env to change
     volumes:
       - ./config.yaml:/app/config.yaml:ro
 

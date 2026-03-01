@@ -1,0 +1,67 @@
+{{/*
+  layouts/gallery/list.html
+  ─────────────────────────────────────────────────────────────────────────────
+  Renders the /gallery/ section index — a card grid of all galleries.
+  Drop at:  layouts/gallery/list.html  (your site root).
+
+  No Hugo image processing used (avoids Windows file-lock error).
+  Cover images are served at original size; CSS handles cropping.
+  ─────────────────────────────────────────────────────────────────────────────
+*/}}
+
+{{ define "main" }}
+<section class="gallery-list-page">
+
+  <header class="gallery-list-header">
+    <h1>{{ .Title | default "Galleries" }}</h1>
+    {{- with .Content }}<div class="gallery-list-intro">{{ . }}</div>{{- end }}
+  </header>
+
+  {{- if .Pages }}
+  <div class="gallery-list-grid">
+    {{- range .Pages }}
+    {{- $p := . }}
+
+    {{/* Cover image: prefer front-matter `cover` param, else first image in bundle */}}
+    {{- $coverURL := "" }}
+    {{- with $p.Params.cover }}
+      {{- $r := $p.Resources.GetMatch . }}
+      {{- if $r }}{{- $coverURL = $r.RelPermalink }}{{- end }}
+    {{- end }}
+    {{- if not $coverURL }}
+      {{- $imgs := $p.Resources.ByType "image" }}
+      {{- if $imgs }}
+        {{- $coverURL = (index $imgs 0).RelPermalink }}
+      {{- end }}
+    {{- end }}
+
+    {{- $count := len ($p.Resources.ByType "image") }}
+
+    <a class="gallery-card" href="{{ $p.RelPermalink }}">
+      <div class="gallery-card-thumb{{ if not $coverURL }} gallery-card-thumb--empty{{ end }}">
+        {{- if $coverURL }}
+        <img src="{{ $coverURL }}" alt="{{ $p.Title }}" loading="lazy" />
+        {{- else }}
+        <span>No images yet</span>
+        {{- end }}
+      </div>
+      <div class="gallery-card-body">
+        <h2 class="gallery-card-title">{{ $p.Title }}</h2>
+        {{- with $p.Params.description }}
+        <p class="gallery-card-desc">{{ . }}</p>
+        {{- end }}
+        <span class="gallery-card-count">
+          {{ $count }} photo{{ if ne $count 1 }}s{{ end }}
+        </span>
+      </div>
+    </a>
+    {{- end }}
+  </div>
+
+  {{- else }}
+  <p>No galleries yet. Create a subfolder inside <code>content/gallery/</code>
+  with an <code>index.md</code> and some image files.</p>
+  {{- end }}
+
+</section>
+{{ end }}

@@ -617,7 +617,10 @@ def manage():
         const [healthResp, postsResp] = await Promise.all([fetch("/health"), fetch("/api/posts")]);
         const health = await healthResp.json();
         const data = await postsResp.json();
-        const siteUrl = (health.site_url || "").replace(/\/$/, "");
+        let siteUrl = (health.site_url || "").replace(/\/$/, "");
+        if (siteUrl && !siteUrl.startsWith("http://") && !siteUrl.startsWith("https://")) {
+          siteUrl = "https://" + siteUrl;
+        }
         if (!postsResp.ok) { list.innerHTML = `<p class="empty">Error: ${data.error}</p>`; return; }
         if (!data.posts.length) { list.innerHTML = `<p class="empty">No posts found.</p>`; return; }
         list.innerHTML = "";

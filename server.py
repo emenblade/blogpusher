@@ -284,6 +284,21 @@ def form():
       white-space: nowrap; padding-left: 0; width: 44%;
     }
     .md-table tr + tr td { border-top: 1px solid #1e1e1e; }
+    #file-list { margin-top: 10px; display: flex; flex-direction: column; gap: 6px; }
+    .file-item {
+      display: flex; align-items: center; gap: 8px;
+      background: #1a1a1a; border: 1px solid #2a2a2a; border-radius: 8px; padding: 8px 10px;
+    }
+    .file-item .file-name {
+      flex: 1; font-size: 0.82rem; color: #c4b5fd;
+      font-family: "Menlo","Courier New",monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    .file-item .file-btn {
+      background: none; border: none; color: #666; cursor: pointer;
+      padding: 3px; border-radius: 4px; display: flex; align-items: center; flex-shrink: 0;
+    }
+    .file-item .file-btn:hover { color: #a78bfa; }
+    .file-item .file-btn.del:hover { color: #ef4444; }
   </style>
 </head>
 <body>
@@ -302,7 +317,7 @@ def form():
     font-size:0.82rem; color:#a78bfa;">
     Editing: <strong id="edit-banner-slug"></strong><br>
     <span style="color:#555;font-size:0.75rem">
-      Existing images are preserved — upload new ones to add or replace them.
+      Existing images and files are preserved — upload new ones to add or replace them.
     </span>
   </div>
 
@@ -343,6 +358,14 @@ def form():
   </label>
 
   <div id="preview-grid"></div>
+
+  <label style="margin-top:22px">Attachments <span style="color:#555;font-weight:400;text-transform:none">(PDF, etc.)</span></label>
+  <div class="upload-area" id="file-upload-area">
+    <input type="file" id="attachments" multiple>
+    <div class="upload-icon">📎</div>
+    <p class="upload-text">Tap to attach files<br><strong>Reference in body as [label](filename.pdf)</strong></p>
+  </div>
+  <div id="file-list"></div>
 
   <button id="publish-btn" onclick="publish()">Publish Post</button>
   <div id="status"></div>
@@ -397,6 +420,13 @@ And so on.</code></pre>
         <p>All body photos appear in the slider by default. To keep a photo out of the slider (e.g. a diagram or a detail shot you only want inline), tap the 👁 icon on its tile — it dims to show it's excluded. It still gets uploaded and you can still reference it in the body with <code>![](_N-image.jpg)</code>.</p>
       </div>
 
+      <div class="help-section">
+        <h3>File Attachments</h3>
+        <p>Upload PDFs or other files to include them alongside your post. After uploading, tap the copy icon next to the filename to get a markdown link you can paste into the body:</p>
+        <pre><code>[Download the guide](my-guide.pdf)</code></pre>
+        <p>Files are stored in the post bundle and accessible at <code>/posts/slug/filename.pdf</code> on your site. To remove a file in edit mode, tap ✕ next to it before updating the post.</p>
+      </div>
+
     </div>
   </details>
 
@@ -408,6 +438,8 @@ And so on.</code></pre>
     let excludedFromSlider = new Set();
     let existingEntries = []; // edit mode: [{name, origHidden, hidden, removed, bodyN}]
     let editSlug = null;
+    let selectedAttachments = [];
+    let existingFiles = []; // edit mode: [{name, removed}]
 
     const EYE_ON = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>`;
     const EYE_OFF = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>`;
@@ -415,10 +447,20 @@ And so on.</code></pre>
     const CHECK_ICON = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>`;
 
     function copyMd(text, btn) {
-      navigator.clipboard.writeText(text).then(() => {
+      const done = () => {
         btn.innerHTML = CHECK_ICON;
         setTimeout(() => { btn.innerHTML = COPY_ICON; }, 1200);
-      });
+      };
+      if (navigator.clipboard) {
+        navigator.clipboard.writeText(text).then(done);
+      } else {
+        const ta = document.createElement("textarea");
+        ta.value = text; ta.style.position = "fixed"; ta.style.opacity = "0";
+        document.body.appendChild(ta); ta.focus(); ta.select();
+        document.execCommand("copy");
+        document.body.removeChild(ta);
+        done();
+      }
     }
 
     document.getElementById("photos").addEventListener("change", function(e) {
@@ -438,6 +480,40 @@ And so on.</code></pre>
       renderPreviews();
     });
 
+    document.getElementById("attachments").addEventListener("change", function(e) {
+      selectedAttachments = [...selectedAttachments, ...Array.from(e.target.files)];
+      renderFileList();
+      this.value = "";
+    });
+
+    function renderFileList() {
+      const list = document.getElementById("file-list");
+      list.innerHTML = "";
+      existingFiles.forEach((entry, i) => {
+        if (entry.removed) return;
+        const mdLink = JSON.stringify(`[${entry.name}](${entry.name})`);
+        const item = document.createElement("div");
+        item.className = "file-item";
+        item.innerHTML = `
+          <span class="file-name" title="${entry.name}">${entry.name}</span>
+          <button class="file-btn" onclick="copyMd(${mdLink}, this)" title="Copy markdown link">${COPY_ICON}</button>
+          <button class="file-btn del" onclick="removeExistingFile(${i})" title="Remove">&#x2715;</button>
+        `;
+        list.appendChild(item);
+      });
+      selectedAttachments.forEach((file, i) => {
+        const mdLink = JSON.stringify(`[${file.name}](${file.name})`);
+        const item = document.createElement("div");
+        item.className = "file-item";
+        item.innerHTML = `
+          <span class="file-name" title="${file.name}">${file.name}</span>
+          <button class="file-btn" onclick="copyMd(${mdLink}, this)" title="Copy markdown link">${COPY_ICON}</button>
+          <button class="file-btn del" onclick="removeAttachment(${i})" title="Remove">&#x2715;</button>
+        `;
+        list.appendChild(item);
+      });
+    }
+
     function renderPreviews() {
       const grid = document.getElementById("preview-grid");
       const coverInGallery = document.getElementById("cover-in-gallery").checked;
@@ -451,7 +527,7 @@ And so on.</code></pre>
         const item = document.createElement("div");
         item.className = "preview-item" + (entry.hidden ? " slider-hidden" : "");
         const ext = entry.name.split('.').pop().toLowerCase();
-        const mdText = entry.hidden ? `![](_${entry.bodyN}-image.${ext})` : null;
+        const mdText = entry.hidden ? `![](_${entry.bodyN}-image.${ext})` : `![](${entry.bodyN}-image.${ext})`;
         item.innerHTML = `
           <img src="/api/image/${encodeURIComponent(editSlug)}/${encodeURIComponent(entry.name)}" alt="">
           <span class="badge">${entry.bodyN}</span>
@@ -473,7 +549,7 @@ And so on.</code></pre>
         else if (coverInGallery)        bodyN = maxExistingN + i + 1;
         else                            bodyN = maxExistingN + i;
         const ext = file.name.split('.').pop().toLowerCase();
-        const mdText = (hidden && bodyN !== null) ? `![](_${bodyN}-image.${ext})` : null;
+        const mdText = bodyN !== null ? (hidden ? `![](_${bodyN}-image.${ext})` : `![](${bodyN}-image.${ext})`) : null;
         item.innerHTML = `
           <img src="${url}" alt="">
           <span class="badge">${i === 0 ? "Cover" : bodyN}</span>
@@ -512,6 +588,16 @@ And so on.</code></pre>
       renderPreviews();
     }
 
+    function removeAttachment(i) {
+      selectedAttachments.splice(i, 1);
+      renderFileList();
+    }
+
+    function removeExistingFile(i) {
+      existingFiles[i].removed = true;
+      renderFileList();
+    }
+
     async function fileToBase64(file) {
       return new Promise((res, rej) => {
         const r = new FileReader();
@@ -542,7 +628,7 @@ And so on.</code></pre>
 
       const btn = document.getElementById("publish-btn");
       btn.disabled = true;
-      setStatus("Preparing photos...", "loading");
+      setStatus("Preparing media...", "loading");
 
       const coverInGallery = document.getElementById("cover-in-gallery").checked;
       let cover_image = null, images = [];
@@ -560,11 +646,21 @@ And so on.</code></pre>
         }
       }
 
+      const files = [];
+      for (const f of selectedAttachments) {
+        files.push({ filename: f.name, data: await fileToBase64(f) });
+      }
+
       const maxExistingN = existingEntries.reduce((max, e) => Math.max(max, e.bodyN), 0);
       const image_start = maxExistingN + 1;
-      const existing_edits = existingEntries
-        .filter(e => e.removed || e.hidden !== e.origHidden)
-        .map(e => ({name: e.name, hidden: e.hidden, remove: e.removed}));
+      const existing_edits = [
+        ...existingEntries
+          .filter(e => e.removed || e.hidden !== e.origHidden)
+          .map(e => ({name: e.name, hidden: e.hidden, remove: e.removed})),
+        ...existingFiles
+          .filter(f => f.removed)
+          .map(f => ({name: f.name, remove: true})),
+      ];
 
       setStatus("Pushing to GitHub...", "loading");
 
@@ -572,7 +668,7 @@ And so on.</code></pre>
         const resp = await fetch("/publish", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ title, date, description, tags, body, cover_image, images, enable_toc: enableToc, image_start, existing_edits }),
+          body: JSON.stringify({ title, date, description, tags, body, cover_image, images, files, enable_toc: enableToc, image_start, existing_edits }),
         });
         const result = await resp.json();
         if (resp.ok) {
@@ -584,6 +680,7 @@ And so on.</code></pre>
           document.getElementById("enable-toc").checked = false;
           dateInput.value = new Date().toISOString().split("T")[0];
           selectedFiles = []; excludedFromSlider = new Set(); existingEntries = []; editSlug = null; renderPreviews();
+          selectedAttachments = []; existingFiles = []; renderFileList();
         } else {
           setStatus("Error: " + (result.error || JSON.stringify(result)), "err");
         }
@@ -615,7 +712,9 @@ And so on.</code></pre>
           const bodyN = match ? parseInt(match[1]) : 0;
           return {name, origHidden: hidden, hidden, removed: false, bodyN};
         });
+        existingFiles = (p.existing_files || []).map(name => ({name, removed: false}));
         renderPreviews();
+        renderFileList();
       } catch(e) { /* silently fail */ }
     })();
 
@@ -933,6 +1032,20 @@ def publish():
         except Exception as e:
             errors.append(f"Image {i} error: {e}")
 
+    # Attached files (PDFs, etc.)
+    for f in (data.get("files") or []):
+        try:
+            file_bytes = base64.b64decode(f["data"])
+            fname = os.path.basename(f.get("filename") or "").strip()
+            if not fname or ".." in fname or fname == "index.md":
+                errors.append(f"Skipped invalid filename: {f.get('filename')!r}")
+                continue
+            dest = f"content/posts/{slug}/{fname}"
+            ok, err = push_file(dest, file_bytes, f"file: {fname}", is_binary=True)
+            (results if ok else errors).append(("+ " if ok else "- ") + dest + ("" if ok else f": {err}"))
+        except Exception as e:
+            errors.append(f"File error: {e}")
+
     # Front matter — omit no_toc when TOC is enabled
     tags_yaml = "\n".join(f"  - {t}" for t in tags)
     fm_lines  = [
@@ -1003,10 +1116,13 @@ def get_post(slug):
         f"{GITHUB_API}/repos/{GITHUB_REPO}/contents/content/posts/{slug}",
         headers=gh_headers()
     )
-    existing_images = sorted([
+    _image_re = re.compile(r'^_?\d+-image\.')
+    all_bundle = [
         f["name"] for f in (img_r.json() if img_r.status_code == 200 else [])
         if f.get("type") == "file" and f["name"] != "index.md"
-    ])
+    ]
+    existing_images = sorted([n for n in all_bundle if _image_re.match(n)])
+    existing_files  = sorted([n for n in all_bundle if not _image_re.match(n)])
 
     tags = [t for t in (fm.get("tags") or []) if t != "blog"]
 
@@ -1018,6 +1134,7 @@ def get_post(slug):
         "body": body,
         "enable_toc": not fm.get("no_toc", False),
         "existing_images": existing_images,
+        "existing_files": existing_files,
     })
 
 
